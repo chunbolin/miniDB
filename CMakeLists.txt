@@ -4,7 +4,7 @@ project(cs222p-winter20)
 set(CMAKE_CXX_STANDARD 11)
 
 add_custom_target(clean-all COMMAND rm Index* Indices* left* right* large* group* *out Tables Columns tbl_* *_file *idx)
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address -O1 -g  -fno-omit-frame-pointer -ledit")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address  -g  -fno-omit-frame-pointer -ledit") #-O1
 if (CMAKE_BUILD_TYPE MATCHES Debug)
     add_definitions(-DDEBUG=1)
 endif ()
