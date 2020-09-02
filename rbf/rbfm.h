@@ -6,6 +6,7 @@
 #include <cstring>
 #include <vector>
 #include <cmath>
+#include <iostream>
 #include "pfm.h"
 
 // Record ID
@@ -29,6 +30,8 @@ struct Attribute {
 
 struct PageMsg{
     unsigned freeSpace;
+    unsigned tupleCount;
+
 };
 
 // Comparison Operator (NOT needed for part 1 of the project)
