@@ -1,3 +1,4 @@
+
 #include "rbfm.h"
 
 
@@ -23,7 +24,7 @@ RC RecordBasedFileManager::destroyFile(const std::string &fileName) {
 }
 
 RC RecordBasedFileManager::openFile(const std::string &fileName, FileHandle &fileHandle) {
-    return PagedFileManager::instance().openFile(fileName,fileHandle);
+    return PagedFileManager::instance().openFile(fileName, fileHandle);
 }
 
 RC RecordBasedFileManager::closeFile(FileHandle &fileHandle) {
@@ -32,6 +33,29 @@ RC RecordBasedFileManager::closeFile(FileHandle &fileHandle) {
 
 RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                         const void *data, RID &rid) {
+    int attrSize = recordDescriptor.size();
+    int nullInfoLen = ceil(((double) attrSize) / 32);
+    unsigned nullInfos[nullInfoLen];
+    memccpy(nullInfos, data, sizeof(unsigned), nullInfoLen);
+    bool infos[attrSize];
+    int index = 0, count = 0;
+    for (int i = 0; i < nullInfoLen; ++i) {
+        unsigned num = nullInfos[i];
+        count = 0;
+        while (count < 32) {
+            if (num & 1) {
+                infos[index] = true;
+            } else {
+                infos[index] = false;
+            }
+            num >>= 1;
+            count++;
+            index++;
+        }
+    }
+    void *page = malloc(PAGE_SIZE);
+    fileHandle.readPage(fileHandle.getNumberOfPages() - 1, page);
+
     return -1;
 }
 

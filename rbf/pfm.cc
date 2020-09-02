@@ -1,22 +1,30 @@
 #include "pfm.h"
 #include <cstdio>
 
-RC writeCounterValues(FILE *file, unsigned counterArray[4]) {
+//file header msg
+struct FileMsg {
+    unsigned pageCounter; //page number in current file
+    unsigned readPageCounter; //total page read count
+    unsigned writePageCounter; // total page write count
+    unsigned appendPageCounter; // total page append count
+};
+
+RC writeCounterValues(FILE *file, FileMsg *fileMsg) {
     rewind(file);
     size_t result;
-    result = fwrite(counterArray, sizeof(unsigned), 4, file);
-    if (result != 4) {
+    result = fwrite(fileMsg, sizeof(FileMsg), 1, file);
+    if (result != 1) {
         fclose(file);
         return -1;
     }
     return 0;
 }
 
-RC readCounterValues(FILE *file, unsigned counterArray[4]) {
+RC readCounterValues(FILE *file, FileMsg *fileMsg) {
     rewind(file);
     size_t result;
-    result = fread(counterArray, sizeof(unsigned), 4, file);
-    if (result != 4) {
+    result = fread(fileMsg, sizeof(FileMsg), 1, file);
+    if (result != 1) {
         fclose(file);
         return -1;
     }
@@ -42,8 +50,8 @@ RC PagedFileManager::createFile(const std::string &fileName) {
         FILE *file = fopen(fileName.c_str(), "wb");
 
         //init all counter
-        unsigned counterArray[4] = {0, 0, 0, 0};
-        writeCounterValues(file, counterArray);
+        FileMsg fileMsg{0, 0, 0, 0};
+        writeCounterValues(file, &fileMsg);
 
         fclose(file);
         return 0;
@@ -68,11 +76,11 @@ RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandl
         fclose(check);
         FILE *file = fopen(fileName.c_str(), "rw+b");
 
-        unsigned counterArray[4];
-        readCounterValues(file, counterArray);
+        FileMsg fileMsg{};
+        readCounterValues(file, &fileMsg);
 
-        fileHandle = *(new FileHandle(counterArray[0], file,
-                                      counterArray[1], counterArray[2], counterArray[3]));
+        fileHandle = *(new FileHandle(fileMsg.pageCounter, file,
+                                      fileMsg.readPageCounter, fileMsg.writePageCounter, fileMsg.appendPageCounter));
         return 0;
     } else {
         return -1;
@@ -117,7 +125,7 @@ FileHandle::~FileHandle() = default;
 RC FileHandle::readPage(PageNum pageNum, void *data) {
     if (pageNum >= pageCounter) return -1;
     size_t result;
-    fseek(file, sizeof(unsigned ) * 4 + pageNum * PAGE_SIZE, SEEK_SET);
+    fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
     result = fread(data, PAGE_SIZE, 1, this->file);
     if (result != 1) {
         fclose(file);
@@ -129,14 +137,14 @@ RC FileHandle::readPage(PageNum pageNum, void *data) {
 
 RC FileHandle::writePage(PageNum pageNum, const void *data) {
     if (pageNum >= pageCounter) return -1;
-    fseek(file, sizeof(unsigned) * 4 + pageNum * PAGE_SIZE, SEEK_SET);
+    fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
     writePageCounter++;
     return 0;
 }
 
 RC FileHandle::appendPage(const void *data) {
-    fseek(file, sizeof(unsigned) * 4 + pageCounter * PAGE_SIZE, SEEK_SET);
+    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
     pageCounter++;
     appendPageCounter++;
@@ -144,8 +152,8 @@ RC FileHandle::appendPage(const void *data) {
 }
 
 RC FileHandle::close() {
-    unsigned counterArray[4] = {pageCounter, readPageCounter, writePageCounter, appendPageCounter};
-    writeCounterValues(file, counterArray);
+    FileMsg fileMsg{pageCounter, readPageCounter, writePageCounter, appendPageCounter};
+    writeCounterValues(file, &fileMsg);
 
     fflush(file);
     fclose(file);

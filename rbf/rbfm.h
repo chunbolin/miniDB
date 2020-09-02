@@ -1,7 +1,11 @@
 #ifndef _rbfm_h_
 #define _rbfm_h_
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
+#include <cmath>
 #include "pfm.h"
 
 // Record ID
@@ -21,6 +25,10 @@ struct Attribute {
     std::string name;  // attribute name
     AttrType type;     // attribute type
     AttrLength length; // attribute length
+};
+
+struct PageMsg{
+    unsigned freeSpace;
 };
 
 // Comparison Operator (NOT needed for part 1 of the project)
