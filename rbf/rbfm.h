@@ -28,10 +28,16 @@ struct Attribute {
     AttrLength length; // attribute length
 };
 
-struct PageMsg{
-    unsigned freeSpace;
+struct PageMsg {
     unsigned tupleCount;
+    unsigned slotCount;
+    unsigned freeStart;
+    unsigned freeEnd;
+};
 
+struct SlotElement {
+    unsigned length;
+    unsigned offset;
 };
 
 // Comparison Operator (NOT needed for part 1 of the project)

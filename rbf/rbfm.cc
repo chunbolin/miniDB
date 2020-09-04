@@ -75,79 +75,116 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
                                         const void *data, RID &rid) {
     unsigned recordSize = getRecordSize(recordDescriptor, data);
     bool flag = false;
+    void *page = malloc(PAGE_SIZE);
     for (int i = fileHandle.getNumberOfPages() - 1; i >= 0; i--) {
-        void *page = malloc(PAGE_SIZE);
         fileHandle.readPage(i, page);
         PageMsg pageMsg{};
         memcpy(&pageMsg, page, sizeof(PageMsg));
-        unsigned offsets[pageMsg.tupleCount + 1];
-        memcpy(offsets, (char *) page + sizeof(PageMsg), sizeof(unsigned) * pageMsg.tupleCount);
-        if (pageMsg.freeSpace >= recordSize) {
-            unsigned offset;
-            if (pageMsg.tupleCount == 0) {
-                offset = PAGE_SIZE - recordSize;
-                memcpy((char *) page + offset, data, recordSize);
-            } else {
-                offset = offsets[pageMsg.tupleCount - 1] - recordSize;
-                memcpy((char *) page + offset, data, recordSize);
+
+        SlotElement slots[pageMsg.slotCount + 1];
+        memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+        int slotNum = 0;
+        bool needAddSlot = false;
+        for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
+            if (slotNum == pageMsg.slotCount) {
+                needAddSlot = true;
+                break;
             }
-            offsets[pageMsg.tupleCount] = offset;
+            if (slots[slotNum].length == 0) break;
+        }
+
+        if (pageMsg.freeEnd - pageMsg.freeStart >= recordSize) {
+            unsigned offset = pageMsg.freeEnd - recordSize;
+
+            //insert tuple
+            memcpy((char *) page + offset, data, recordSize);
+
+            //maintain pageMsg
             pageMsg.tupleCount++;
-            pageMsg.freeSpace -= (4 + recordSize);
+            if (needAddSlot) {
+                pageMsg.slotCount++;
+                pageMsg.freeStart += sizeof(SlotElement);
+            }
+            pageMsg.freeEnd -= recordSize;
             memcpy(page, &pageMsg, sizeof(pageMsg));
-            memcpy((char *) page + sizeof(PageMsg), offsets, sizeof(unsigned) * pageMsg.tupleCount);
+
+            //maintain slots
+            slots[slotNum].offset = offset;
+            slots[slotNum].length = recordSize;
+            memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+
+
             fileHandle.writePage(i, page);
             rid.pageNum = i;
-            rid.slotNum = offset;
+            rid.slotNum = slotNum;
             flag = true;
             break;
         }
     }
     if (!flag) { //append a new page
-        void *page = malloc(PAGE_SIZE);
-        PageMsg pageMsg{PAGE_SIZE - recordSize, 1};
         unsigned offset = PAGE_SIZE - recordSize;
+        PageMsg pageMsg{1, 1, sizeof(SlotElement), offset};
         memcpy((char *) page + offset, data, recordSize);
         memcpy(page, &pageMsg, sizeof(pageMsg));
-        memcpy((char *) page + sizeof(PageMsg), &offset, sizeof(unsigned));
+        SlotElement slotElement{recordSize, offset};
+        memcpy((char *) page + sizeof(PageMsg), &slotElement, sizeof(slotElement));
         fileHandle.appendPage(page);
         rid.pageNum = fileHandle.getNumberOfPages() - 1;
-        rid.slotNum = offset;
+        rid.slotNum = 0;
     }
+    free(page);
     return 0;
 }
 
 RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                       const RID &rid, void *data) {
+    if (rid.pageNum >= fileHandle.getNumberOfPages()) return -1;
     void *page = malloc(PAGE_SIZE);
     fileHandle.readPage(rid.pageNum, page);
     PageMsg pageMsg{};
     memcpy(&pageMsg, page, sizeof(PageMsg));
-    unsigned offsets[pageMsg.tupleCount];
-    memcpy(offsets, (char *) page + sizeof(PageMsg), sizeof(unsigned) * pageMsg.tupleCount);
-    if (pageMsg.tupleCount == 0) {
-        memcpy(data, (char *) page + rid.slotNum, PAGE_SIZE - rid.slotNum);
-    } else {
-        int i = 0;
-        for (; i < pageMsg.tupleCount; ++i) {
-            if (offsets[i] == rid.slotNum) {
-                break;
-            }
-        }
-        int recordSize;
-        if (i == pageMsg.tupleCount - 1) {
-            recordSize = PAGE_SIZE - rid.slotNum;
-        } else {
-            recordSize = rid.slotNum - offsets[i + 1];
-        }
-        memcpy(data, (char *) page + rid.slotNum, recordSize);
-    }
+
+    SlotElement slots[pageMsg.slotCount];
+    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+
+    unsigned offset = slots[rid.slotNum].offset;
+    unsigned length = slots[rid.slotNum].length;
+    if (length == 0) return -1;
+    memcpy(data, (char *) page + offset, length);
+
+    free(page);
     return 0;
 }
 
 RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                         const RID &rid) {
-    return -1;
+    void *page = malloc(PAGE_SIZE);
+    fileHandle.readPage(rid.pageNum, page);
+    PageMsg pageMsg{};
+    memcpy(&pageMsg, page, sizeof(PageMsg));
+
+    SlotElement slots[pageMsg.slotCount];
+    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+
+    //compact disk
+    unsigned offset = slots[rid.slotNum].offset;
+    unsigned length = slots[rid.slotNum].length;
+
+    for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
+        unsigned currOffset = slots[i].offset;
+        unsigned currLength = slots[i].length;
+        memmove((char *) page + currOffset + length, (char *) page + currOffset, currLength);
+    }
+
+    pageMsg.freeEnd += length;
+    pageMsg.tupleCount--;
+    memcpy(page, &pageMsg, sizeof(pageMsg));
+    slots[rid.slotNum].length = 0;
+    memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+    fileHandle.writePage(rid.pageNum, page);
+
+    free(page);
+    return 0;
 }
 
 RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data) {

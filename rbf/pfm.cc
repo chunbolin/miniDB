@@ -139,6 +139,7 @@ RC FileHandle::writePage(PageNum pageNum, const void *data) {
     if (pageNum >= pageCounter) return -1;
     fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
+    fflush(file);
     writePageCounter++;
     return 0;
 }
@@ -146,6 +147,7 @@ RC FileHandle::writePage(PageNum pageNum, const void *data) {
 RC FileHandle::appendPage(const void *data) {
     fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
+    fflush(file);
     pageCounter++;
     appendPageCounter++;
     return 0;
