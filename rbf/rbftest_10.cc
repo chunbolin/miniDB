@@ -79,13 +79,15 @@ int RBFTest_10(RecordBasedFileManager &rbfm) {
     for (int i = 0; i < numRecords; i++) {
         memset(record, 0, 1000);
         memset(returnedData, 0, 1000);
+        if (i==26)
+            i=26;
         rc = rbfm.readRecord(fileHandle, recordDescriptor, rids[i], returnedData);
         assert(rc == success && "Reading a record should not fail.");
 
-        if (i % 1000 == 0) {
+//        if (i % 1000 == 0) {
             std::cout << std::endl << "Returned Data:" << std::endl;
             rbfm.printRecord(recordDescriptor, returnedData);
-        }
+//        }
 
         int size = 0;
         prepareLargeRecord(recordDescriptor.size(), nullsIndicator, i, record, &size);

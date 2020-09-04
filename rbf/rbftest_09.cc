@@ -50,8 +50,19 @@ int RBFTest_9(RecordBasedFileManager &rbfm, std::vector<RID> &rids, std::vector<
         memset(record, 0, 1000);
         prepareLargeRecord(recordDescriptor.size(), nullsIndicator, i, record, &size);
 
+        if (i == 26) {
+            i=26;
+        }
         rc = rbfm.insertRecord(fileHandle, recordDescriptor, record, rid);
         assert(rc == success && "Inserting a record should not fail.");
+        if (i == 26) {
+            rbfm.printRecord(recordDescriptor, record);
+            void *returnData = malloc(1000);
+            rbfm.readRecord(fileHandle, recordDescriptor, rid, returnData);
+            rbfm.printRecord(recordDescriptor, returnData);
+            free(returnData);
+        }
+        memset(record, 0, 1000);
 
         rids.push_back(rid);
         sizes.push_back(size);

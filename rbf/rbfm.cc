@@ -55,19 +55,27 @@ void getNullInfo(const std::vector<Attribute> &recordDescriptor, const void *dat
 
 unsigned getRecordSize(const std::vector<Attribute> &recordDescriptor, const void *data) {
     unsigned attrSize = recordDescriptor.size();
-    unsigned recordSize = ceil(((double) attrSize) / 8);
+    unsigned curr = ceil(((double) attrSize) / 8);
     bool nullInfo[attrSize];
     getNullInfo(recordDescriptor, data, nullInfo);
     for (int i = 0; i < attrSize; ++i) {
-        if (nullInfo[i]) continue;
         Attribute attr = recordDescriptor.at(i);
-        if (attr.type == TypeInt || attr.type == TypeReal) {
-            recordSize += 4;
-        } else if (attr.type == TypeVarChar) {
-            recordSize += 4 + attr.length;
+        if (nullInfo[i])
+            continue;
+        else {
+            if (attr.type == TypeInt) {
+                curr += 4;
+            } else if (attr.type == TypeReal) {
+                curr += 4;
+            } else if (attr.type == TypeVarChar) {
+                int len;
+                memcpy(&len, (char *) data + curr, sizeof(int));
+                curr += 4;
+                curr += len;
+            }
         }
     }
-    return recordSize;
+    return curr;
 }
 
 
@@ -92,9 +100,12 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
             }
             if (slots[slotNum].length == 0) break;
         }
-
-        if (pageMsg.freeEnd - pageMsg.freeStart >= recordSize) {
-            unsigned offset = pageMsg.freeEnd - recordSize;
+//        bool aa= pageMsg.freeStart>pageMsg.freeEnd;
+//        std::cout<<"start:"<<pageMsg.freeStart<<" end:"<<pageMsg.freeEnd;
+//        if (aa) std::cout<<" hhhhhh";
+//        std::cout<<std::endl;
+        if (pageMsg.freeEnd > pageMsg.freeStart && pageMsg.freeEnd - pageMsg.freeStart + 1 >= recordSize+sizeof(SlotElement)+5) {
+            unsigned offset = pageMsg.freeEnd - recordSize + 1;
 
             //insert tuple
             memcpy((char *) page + offset, data, recordSize);
@@ -123,7 +134,7 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
     }
     if (!flag) { //append a new page
         unsigned offset = PAGE_SIZE - recordSize;
-        PageMsg pageMsg{1, 1, sizeof(SlotElement), offset};
+        PageMsg pageMsg{1, 1, sizeof(SlotElement), offset - 1};
         memcpy((char *) page + offset, data, recordSize);
         memcpy(page, &pageMsg, sizeof(pageMsg));
         SlotElement slotElement{recordSize, offset};
@@ -220,6 +231,7 @@ RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescr
             }
         }
     }
+    std::cout << std::endl;
 
     return 0;
 }
