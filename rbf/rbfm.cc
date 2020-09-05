@@ -100,11 +100,9 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
             }
             if (slots[slotNum].length == 0) break;
         }
-//        bool aa= pageMsg.freeStart>pageMsg.freeEnd;
-//        std::cout<<"start:"<<pageMsg.freeStart<<" end:"<<pageMsg.freeEnd;
-//        if (aa) std::cout<<" hhhhhh";
-//        std::cout<<std::endl;
-        if (pageMsg.freeEnd > pageMsg.freeStart && pageMsg.freeEnd - pageMsg.freeStart + 1 >= recordSize+sizeof(SlotElement)+5) {
+
+        if (pageMsg.freeEnd > pageMsg.freeStart &&
+            pageMsg.freeEnd - pageMsg.freeStart + 1 >= recordSize + sizeof(SlotElement)) {
             unsigned offset = pageMsg.freeEnd - recordSize + 1;
 
             //insert tuple
@@ -124,7 +122,6 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
             slots[slotNum].length = recordSize;
             memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
 
-
             fileHandle.writePage(i, page);
             rid.pageNum = i;
             rid.slotNum = slotNum;
@@ -134,7 +131,7 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
     }
     if (!flag) { //append a new page
         unsigned offset = PAGE_SIZE - recordSize;
-        PageMsg pageMsg{1, 1, sizeof(SlotElement), offset - 1};
+        PageMsg pageMsg{1, 1, sizeof(pageMsg) + sizeof(SlotElement), offset - 1};
         memcpy((char *) page + offset, data, recordSize);
         memcpy(page, &pageMsg, sizeof(pageMsg));
         SlotElement slotElement{recordSize, offset};
@@ -180,11 +177,11 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vecto
     //compact disk
     unsigned offset = slots[rid.slotNum].offset;
     unsigned length = slots[rid.slotNum].length;
-
     for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
         unsigned currOffset = slots[i].offset;
         unsigned currLength = slots[i].length;
         memmove((char *) page + currOffset + length, (char *) page + currOffset, currLength);
+        slots[i].offset = currOffset + length;
     }
 
     pageMsg.freeEnd += length;
