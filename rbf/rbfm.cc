@@ -53,9 +53,9 @@ void getNullInfo(const std::vector<Attribute> &recordDescriptor, const void *dat
     }
 }
 
-unsigned getRecordSize(const std::vector<Attribute> &recordDescriptor, const void *data) {
-    unsigned attrSize = recordDescriptor.size();
-    unsigned curr = ceil(((double) attrSize) / 8);
+int getRecordSize(const std::vector<Attribute> &recordDescriptor, const void *data) {
+    int attrSize = recordDescriptor.size();
+    int curr = ceil(((double) attrSize) / 8);
     bool nullInfo[attrSize];
     getNullInfo(recordDescriptor, data, nullInfo);
     for (int i = 0; i < attrSize; ++i) {
@@ -81,7 +81,10 @@ unsigned getRecordSize(const std::vector<Attribute> &recordDescriptor, const voi
 
 RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                         const void *data, RID &rid) {
-    unsigned recordSize = getRecordSize(recordDescriptor, data);
+    int recordSize = getRecordSize(recordDescriptor, data);
+
+    // since we may need to place tombstone when update, so recode size have to be >= sizeof(RID)
+    if (recordSize < sizeof(RID)) recordSize = sizeof(RID);
     bool flag = false;
     void *page = malloc(PAGE_SIZE);
     for (int i = fileHandle.getNumberOfPages() - 1; i >= 0; i--) {
@@ -91,6 +94,7 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
 
         SlotElement slots[pageMsg.slotCount + 1];
         memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+        //find unused slot, if no such slot, append a new one
         int slotNum = 0;
         bool needAddSlot = false;
         for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
@@ -98,12 +102,12 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
                 needAddSlot = true;
                 break;
             }
-            if (slots[slotNum].length == 0) break;
+            if (slots[slotNum].length == Unused) break;
         }
 
         if (pageMsg.freeEnd > pageMsg.freeStart &&
             pageMsg.freeEnd - pageMsg.freeStart + 1 >= recordSize + sizeof(SlotElement)) {
-            unsigned offset = pageMsg.freeEnd - recordSize + 1;
+            int offset = pageMsg.freeEnd - recordSize + 1;
 
             //insert tuple
             memcpy((char *) page + offset, data, recordSize);
@@ -130,7 +134,7 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
         }
     }
     if (!flag) { //append a new page
-        unsigned offset = PAGE_SIZE - recordSize;
+        int offset = PAGE_SIZE - recordSize;
         PageMsg pageMsg{1, 1, sizeof(pageMsg) + sizeof(SlotElement), offset - 1};
         memcpy((char *) page + offset, data, recordSize);
         memcpy(page, &pageMsg, sizeof(pageMsg));
@@ -155,11 +159,17 @@ RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<
     SlotElement slots[pageMsg.slotCount];
     memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
 
-    unsigned offset = slots[rid.slotNum].offset;
-    unsigned length = slots[rid.slotNum].length;
-    if (length == 0) return -1;
-    memcpy(data, (char *) page + offset, length);
-
+    int offset = slots[rid.slotNum].offset;
+    int length = slots[rid.slotNum].length;
+    if (length == Unused) {
+        return -1;
+    } else if (length == Tombstone) { //if it's tombstone
+        RID tombstoneRid;
+        memcpy(&tombstoneRid, (char *) page + offset, sizeof(RID));
+        readRecord(fileHandle, recordDescriptor, tombstoneRid, data);
+    } else { //else we direct read it
+        memcpy(data, (char *) page + offset, length);
+    }
     free(page);
     return 0;
 }
@@ -175,29 +185,35 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vecto
     memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
 
     //compact disk
-    unsigned offset = slots[rid.slotNum].offset;
-    unsigned length = slots[rid.slotNum].length;
-    for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
-        unsigned currOffset = slots[i].offset;
-        unsigned currLength = slots[i].length;
-        memmove((char *) page + currOffset + length, (char *) page + currOffset, currLength);
-        slots[i].offset = currOffset + length;
-    }
+    int offset = slots[rid.slotNum].offset;
+    int length = slots[rid.slotNum].length;
+    if (length == Tombstone) { //if it's tombstone
+        RID tombstoneRid;
+        memcpy(&tombstoneRid, (char *) page + offset, sizeof(RID));
+        deleteRecord(fileHandle, recordDescriptor, tombstoneRid);
+    } else { //else we direct delete it
+        for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
+            int currOffset = slots[i].offset;
+            int currLength = slots[i].length;
+            memmove((char *) page + currOffset + length, (char *) page + currOffset, currLength);
+            slots[i].offset = currOffset + length;
+        }
 
-    pageMsg.freeEnd += length;
-    pageMsg.tupleCount--;
-    memcpy(page, &pageMsg, sizeof(pageMsg));
-    slots[rid.slotNum].length = 0;
-    memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
-    fileHandle.writePage(rid.pageNum, page);
+        pageMsg.freeEnd += length;
+        pageMsg.tupleCount--;
+        memcpy(page, &pageMsg, sizeof(pageMsg));
+        slots[rid.slotNum].length = Unused;
+        memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+        fileHandle.writePage(rid.pageNum, page);
+    }
 
     free(page);
     return 0;
 }
 
 RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data) {
-    unsigned attrSize = recordDescriptor.size();
-    unsigned curr = ceil(((double) attrSize) / 8);
+    int attrSize = recordDescriptor.size();
+    int curr = ceil(((double) attrSize) / 8);
     bool nullInfo[attrSize];
     getNullInfo(recordDescriptor, data, nullInfo);
     for (int i = 0; i < attrSize; ++i) {
@@ -235,12 +251,147 @@ RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescr
 
 RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                         const void *data, const RID &rid) {
-    return -1;
+    if (rid.pageNum >= fileHandle.getNumberOfPages()) return -1;
+
+    void *page = malloc(PAGE_SIZE);
+    fileHandle.readPage(rid.pageNum, page);
+    PageMsg pageMsg{};
+    memcpy(&pageMsg, page, sizeof(PageMsg));
+
+    SlotElement slots[pageMsg.slotCount];
+    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+
+    int offset = slots[rid.slotNum].offset;
+    int length = slots[rid.slotNum].length;
+    if (length == Unused) return -1;
+
+    int newLength = getRecordSize(recordDescriptor, data);
+    // since we may need to place tombstone when update, so recode size have to be >= sizeof(RID)
+    if (newLength < sizeof(RID)) newLength = sizeof(RID);
+
+    if (newLength == length) {
+        //direct update tuple
+        memcpy((char *) page + offset, data, length);
+    } else if (newLength < length) {
+        int moveOffset = length - newLength;
+        memcpy((char *) page + offset + moveOffset, data, newLength);
+        slots[rid.slotNum].length = newLength;
+        slots[rid.slotNum].offset = offset + moveOffset;
+        //compact disk
+        for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
+            int currOffset = slots[i].offset;
+            int currLength = slots[i].length;
+            memmove((char *) page + currOffset + moveOffset, (char *) page + currOffset, currLength);
+            slots[i].offset = currOffset + moveOffset;
+        }
+
+        pageMsg.freeEnd += moveOffset;
+    } else {
+        int freeSpace = pageMsg.freeStart - pageMsg.freeEnd + 1;
+        if (freeSpace + length >= newLength) {
+            int moveOffset = newLength - length;
+            //compact disk
+            for (int i = pageMsg.slotCount - 1; i >= rid.slotNum + 1; i--) {
+                int currOffset = slots[i].offset;
+                int currLength = slots[i].length;
+                memmove((char *) page + currOffset - moveOffset, (char *) page + currOffset, currLength);
+                slots[i].offset = currOffset + moveOffset;
+            }
+            memcpy((char *) page + offset - moveOffset, data, newLength);
+            slots[rid.slotNum].length = newLength;
+            slots[rid.slotNum].offset = offset - moveOffset;
+            pageMsg.freeEnd -= moveOffset;
+        } else {
+            //insert record, since current page don't have enough space, this record won't be in current page
+            RID insertRid;
+            insertRecord(fileHandle, recordDescriptor, data, insertRid);
+
+            int tombstoneLen = sizeof(RID);
+            int moveOffset = length - tombstoneLen;
+            memcpy((char *) page + offset + moveOffset, &insertRid, tombstoneLen);
+            slots[rid.slotNum].length = Tombstone;
+            slots[rid.slotNum].offset = offset + moveOffset;
+            //compact disk
+            for (int i = rid.slotNum + 1; i < pageMsg.slotCount; i++) {
+                int currOffset = slots[i].offset;
+                int currLength = slots[i].length;
+                memmove((char *) page + currOffset + moveOffset, (char *) page + currOffset, currLength);
+                slots[i].offset = currOffset + moveOffset;
+            }
+            pageMsg.freeEnd += moveOffset;
+        }
+
+
+    }
+    //maintain pageMsg
+    memcpy(page, &pageMsg, sizeof(pageMsg));
+
+    //maintain slots
+    memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+    fileHandle.writePage(rid.pageNum, page);
+    free(page);
+    return 0;
 }
 
 RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                          const RID &rid, const std::string &attributeName, void *data) {
-    return -1;
+    if (rid.pageNum >= fileHandle.getNumberOfPages()) return -1;
+    void *page = malloc(PAGE_SIZE);
+    fileHandle.readPage(rid.pageNum, page);
+    PageMsg pageMsg{};
+    memcpy(&pageMsg, page, sizeof(PageMsg));
+
+    SlotElement slots[pageMsg.slotCount];
+    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+
+    int offset = slots[rid.slotNum].offset;
+    int length = slots[rid.slotNum].length;
+    if (length == Unused) {
+        return -1;
+    } else if (length == Tombstone) { //if it's tombstone
+        RID tombstoneRid;
+        memcpy(&tombstoneRid, (char *) page + offset, sizeof(RID));
+        readAttribute(fileHandle, recordDescriptor, tombstoneRid, attributeName, data);
+    } else { //else we direct read it
+        void *record = malloc(length);
+        memcpy(record, (char *) page + offset, length);
+        int attrSize = recordDescriptor.size();
+        int curr = ceil(((double) attrSize) / 8);
+        bool nullInfo[attrSize];
+        getNullInfo(recordDescriptor, data, nullInfo);
+        for (int i = 0; i < attrSize; ++i) {
+            Attribute attr = recordDescriptor.at(i);
+            if (nullInfo[i])
+                continue;
+            else {
+                if (attr.type == TypeInt) {
+                    if (attr.name == attributeName) {
+                        memcpy(&data, (char *) record + curr, sizeof(int));
+                        break;
+                    }
+                    curr += 4;
+                } else if (attr.type == TypeReal) {
+                    if (attr.name == attributeName) {
+                        memcpy(&data, (char *) record + curr, sizeof(int));
+                        break;
+                    }
+                    curr += 4;
+                } else if (attr.type == TypeVarChar) {
+                    int len;
+                    memcpy(&len, (char *) data + curr, sizeof(int));
+                    curr += 4;
+                    char str[len + 1];
+                    memcpy(str, (char *) data + curr, len);
+                    str[len] = '\0';
+                    curr += len;
+                    std::cout << str << "  ";
+                }
+            }
+        }
+        std::cout << std::endl;
+    }
+    free(page);
+    return 0;
 }
 
 RC RecordBasedFileManager::scan(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
