@@ -28,21 +28,7 @@ struct Attribute {
     AttrLength length; // attribute length
 };
 
-struct PageMsg {
-    int tupleCount;
-    int slotCount;
-    int freeStart;
-    int freeEnd;
-};
 
-struct SlotElement {
-    int length;  //length can be Unused,Tombstone in SlotStatus
-    int offset;
-};
-
-typedef enum {
-    Unused = -1, Tombstone = -2
-} SlotStatus;
 
 // Comparison Operator (NOT needed for part 1 of the project)
 typedef enum {

@@ -1,5 +1,6 @@
 #include "pfm.h"
 #include <cstdio>
+#include <cstring>
 
 RC writeCounterValues(FILE *file, FileMsg *fileMsg) {
     rewind(file);
@@ -114,6 +115,7 @@ FileHandle::FileHandle(unsigned pageCounter, FILE *file,
 
 FileHandle::~FileHandle() = default;
 
+
 RC FileHandle::readPage(PageNum pageNum, void *data) {
     if (pageNum >= pageCounter) return -1;
     size_t result;
@@ -131,7 +133,6 @@ RC FileHandle::writePage(PageNum pageNum, const void *data) {
     if (pageNum >= pageCounter) return -1;
     fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
-    fflush(file);
     writePageCounter++;
     return 0;
 }
@@ -139,7 +140,6 @@ RC FileHandle::writePage(PageNum pageNum, const void *data) {
 RC FileHandle::appendPage(const void *data) {
     fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
     fwrite(data, PAGE_SIZE, 1, file);
-    fflush(file);
     pageCounter++;
     appendPageCounter++;
     return 0;
@@ -148,8 +148,6 @@ RC FileHandle::appendPage(const void *data) {
 RC FileHandle::close() {
     FileMsg fileMsg{pageCounter, readPageCounter, writePageCounter, appendPageCounter};
     writeCounterValues(file, &fileMsg);
-
-    fflush(file);
     fclose(file);
     return 0;
 }
@@ -164,4 +162,31 @@ RC FileHandle::collectCounterValues(unsigned &readPageCount, unsigned &writePage
     appendPageCount = this->appendPageCounter;
     return 0;
 }
+
+RC FileHandle::readFreeList(void *freeList) {
+    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+    size_t result;
+    result = fread(freeList, sizeof(short) * pageCounter, 1, file);
+    if (result != 1) {
+        fclose(file);
+        return -1;
+    }
+    return 0;
+}
+
+RC FileHandle::writeFreeList(void *freeList, unsigned freeListLen) {
+    if (freeListLen != pageCounter) return -1;
+
+    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+    size_t result;
+    result = fwrite(freeList, sizeof(short) * pageCounter, 1, file);
+
+//    fflush(file);
+//    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+//    short aa[pageCounter];
+//    result = fread(aa, sizeof(short) * pageCounter, 1, file);
+
+    return 0;
+}
+
 

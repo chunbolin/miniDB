@@ -16,6 +16,22 @@ struct FileMsg {
     unsigned appendPageCounter; // total page append count
 };
 
+struct PageMsg {
+    int tupleCount;
+    int slotCount;
+    int freeStart;
+    int freeEnd;
+};
+
+struct SlotElement {
+    int length;  //length can be Unused,Tombstone in SlotStatus
+    int offset;
+};
+
+typedef enum {
+    Unused = -1, Tombstone = -2
+} SlotStatus;
+
 class FileHandle;
 
 class PagedFileManager {
@@ -58,9 +74,14 @@ public:
                             unsigned &appendPageCount);                 // Put current counter values into variables
     RC close();
 
+
+    RC readFreeList(void *freeList);                           // Get page free list
+    RC writeFreeList(void* freeList,unsigned freeListLen);                    // Write page free list
+
 private:
     unsigned pageCounter;
     FILE *file;
 };
+
 
 #endif
