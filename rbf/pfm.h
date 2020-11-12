@@ -64,11 +64,12 @@ public:
 
     FileHandle();
 
-    FileHandle(unsigned pageCount, FILE *file);
-
-    FileHandle(unsigned pageCount, FILE *file, unsigned readPageCounter, unsigned writePageCounter,
-               unsigned appendPageCounter);          // Default constructor
     ~FileHandle();                                                      // Destructor
+
+    RC initHandle(unsigned pageCounter, FILE *file,
+                  unsigned readPageCounter,
+                  unsigned writePageCounter,
+                  unsigned appendPageCounter);
 
     RC readPage(PageNum pageNum, void *data);                           // Get a specific page
     RC writePage(PageNum pageNum, const void *data);                    // Write a specific page

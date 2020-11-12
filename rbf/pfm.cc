@@ -79,8 +79,8 @@ RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandl
         readCounterValues(file, &fileMsg);
 
         //init counters and freeList
-        fileHandle = *(new FileHandle(fileMsg.pageCounter, file,
-                                      fileMsg.readPageCounter, fileMsg.writePageCounter, fileMsg.appendPageCounter));
+        fileHandle.initHandle(fileMsg.pageCounter, file, fileMsg.readPageCounter, fileMsg.writePageCounter,
+                              fileMsg.appendPageCounter);
 
         unsigned currentPageNum = fileHandle.getNumberOfPages();
         unsigned freeListCapacity = fileHandle.freeListCapacity;
@@ -100,37 +100,21 @@ RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandl
 }
 
 RC PagedFileManager::closeFile(FileHandle &fileHandle) {
-
     fileHandle.writeFreeList(fileHandle.freeListData);
+    free(fileHandle.freeListData);
     fileHandle.close();
+
     return 0;
 }
 
-FileHandle::FileHandle() {
-    pageCounter = 0;
-    readPageCounter = 0;
-    writePageCounter = 0;
-    appendPageCounter = 0;
+FileHandle::FileHandle() = default;
 
-    freeListData = malloc(sizeof(short) * 8);
-    freeListCapacity = 8;
-}
+FileHandle::~FileHandle() = default;
 
-FileHandle::FileHandle(unsigned pageCounter, FILE *file) {
-    this->pageCounter = pageCounter;
-    this->file = file;
-    this->readPageCounter = 0;
-    this->writePageCounter = 0;
-    this->appendPageCounter = 0;
-
-    freeListData = malloc(sizeof(short) * 8);
-    freeListCapacity = 8;
-}
-
-FileHandle::FileHandle(unsigned pageCounter, FILE *file,
-                       unsigned readPageCounter,
-                       unsigned writePageCounter,
-                       unsigned appendPageCounter) {
+RC FileHandle::initHandle(unsigned pageCounter, FILE *file,
+                          unsigned readPageCounter,
+                          unsigned writePageCounter,
+                          unsigned appendPageCounter) {
     this->pageCounter = pageCounter;
     this->file = file;
     this->readPageCounter = readPageCounter;
@@ -139,11 +123,8 @@ FileHandle::FileHandle(unsigned pageCounter, FILE *file,
 
     freeListData = malloc(sizeof(short) * 8);
     freeListCapacity = 8;
+    return 0;
 }
-
-
-FileHandle::~FileHandle() = default;
-
 
 RC FileHandle::readPage(PageNum pageNum, void *data) {
     if (pageNum >= pageCounter) return -1;

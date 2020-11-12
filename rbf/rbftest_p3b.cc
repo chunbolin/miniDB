@@ -2,6 +2,7 @@
 #include "rbfm.h"
 #include "test_util.h"
 
+//since we add freelist, so we don't need to pass this test
 int RBFTest_private_3b(RecordBasedFileManager &rbfm) {
     // Functions Tested:
     // 1. Create File - RBFM

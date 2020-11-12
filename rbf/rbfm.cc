@@ -87,13 +87,15 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
     if (recordSize < sizeof(RID)) recordSize = sizeof(RID);
     bool flag = false;
     void *page = malloc(PAGE_SIZE);
+    unsigned pageCount = fileHandle.getNumberOfPages();
 
     //read freeList
     short *freeList = (short *) fileHandle.freeListData;
 
-    for (int i = fileHandle.getNumberOfPages() - 1; i >= 0; i--) {
-        if (freeList[i] >= recordSize + sizeof(SlotElement)) {
 
+    if (pageCount > 0) {
+        if (freeList[pageCount - 1] >= recordSize + sizeof(SlotElement)) { //try insert in first page
+            unsigned i = pageCount - 1;
             fileHandle.readPage(i, page);
             PageMsg pageMsg{};
             memcpy(&pageMsg, page, sizeof(PageMsg));
@@ -136,9 +138,58 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
             rid.pageNum = i;
             rid.slotNum = slotNum;
             flag = true;
-            break;
+        } else {
+            for (int i = 0; i < pageCount - 1; i++) { //else insert from page 0
+                if (freeList[i] >= recordSize + sizeof(SlotElement)) {
+
+                    fileHandle.readPage(i, page);
+                    PageMsg pageMsg{};
+                    memcpy(&pageMsg, page, sizeof(PageMsg));
+
+                    SlotElement slots[pageMsg.slotCount + 1];
+                    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+                    //find unused slot, if no such slot, append a new one
+                    int slotNum = 0;
+                    bool needAddSlot = false;
+                    for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
+                        if (slotNum == pageMsg.slotCount) {
+                            needAddSlot = true;
+                            break;
+                        }
+                        if (slots[slotNum].length == Unused) break;
+                    }
+
+                    int offset = pageMsg.freeEnd - recordSize + 1;
+
+                    //insert tuple
+                    memcpy((char *) page + offset, data, recordSize);
+
+                    //maintain pageMsg
+                    pageMsg.tupleCount++;
+                    if (needAddSlot) {
+                        pageMsg.slotCount++;
+                        pageMsg.freeStart += sizeof(SlotElement);
+                    }
+                    pageMsg.freeEnd -= recordSize;
+                    memcpy(page, &pageMsg, sizeof(pageMsg));
+
+                    //maintain slots
+                    slots[slotNum].offset = offset;
+                    slots[slotNum].length = recordSize;
+                    memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+
+                    fileHandle.writePage(i, page);
+                    freeList[i] = pageMsg.freeEnd - pageMsg.freeStart + 1;
+
+                    rid.pageNum = i;
+                    rid.slotNum = slotNum;
+                    flag = true;
+                    break;
+                }
+            }
         }
     }
+
     if (!flag) { //append a new page
         int offset = PAGE_SIZE - recordSize;
         PageMsg pageMsg{1, 1, sizeof(pageMsg) + sizeof(SlotElement), offset - 1};
@@ -146,16 +197,13 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
         memcpy(page, &pageMsg, sizeof(pageMsg));
         SlotElement slotElement{recordSize, offset};
         memcpy((char *) page + sizeof(PageMsg), &slotElement, sizeof(slotElement));
-        rid.pageNum = fileHandle.getNumberOfPages() - 1;
-        rid.slotNum = 0;
-
         fileHandle.appendPage(page);
 
         unsigned currentPageNum = fileHandle.getNumberOfPages();
         unsigned freeListCapacity = fileHandle.freeListCapacity;
         if (currentPageNum > freeListCapacity) {
             auto *newFreeList = (short *) malloc(sizeof(short) * freeListCapacity * 2);
-            memcpy(newFreeList, freeList, freeListCapacity);
+            memcpy(newFreeList, freeList, sizeof(short) * freeListCapacity);
             free(fileHandle.freeListData);
             fileHandle.freeListData = newFreeList;
             fileHandle.freeListCapacity *= 2;
@@ -163,6 +211,9 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
             freeList = (short *) fileHandle.freeListData;
         }
         freeList[currentPageNum - 1] = pageMsg.freeEnd - pageMsg.freeStart + 1;
+
+        rid.pageNum = currentPageNum - 1;
+        rid.slotNum = 0;
     }
 
     free(page);
@@ -187,7 +238,7 @@ RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<
     } else if (length == Tombstone) { //if it's tombstone
         RID tombstoneRid;
         memcpy(&tombstoneRid, (char *) page + offset, sizeof(RID));
-        readRecord(fileHandle, recordDescriptor, tombstoneRid, data);
+        return readRecord(fileHandle, recordDescriptor, tombstoneRid, data);
     } else { //else we direct read it
         memcpy(data, (char *) page + offset, length);
     }
@@ -314,7 +365,7 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
 
         pageMsg.freeEnd += moveOffset;
     } else {
-        int freeSpace = pageMsg.freeStart - pageMsg.freeEnd + 1;
+        int freeSpace = pageMsg.freeEnd - pageMsg.freeStart + 1;
         if (freeSpace + length >= newLength) {
             int moveOffset = newLength - length;
             //compact disk
@@ -322,7 +373,7 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
                 int currOffset = slots[i].offset;
                 int currLength = slots[i].length;
                 memmove((char *) page + currOffset - moveOffset, (char *) page + currOffset, currLength);
-                slots[i].offset = currOffset + moveOffset;
+                slots[i].offset = currOffset - moveOffset;
             }
             memcpy((char *) page + offset - moveOffset, data, newLength);
             slots[rid.slotNum].length = newLength;
