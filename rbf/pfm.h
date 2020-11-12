@@ -6,7 +6,9 @@ typedef int RC;
 
 #define PAGE_SIZE 4096
 
+#include <cstring>
 #include <string>
+#include <iostream>
 
 //file header msg
 struct FileMsg {
@@ -57,6 +59,8 @@ public:
     unsigned readPageCounter;
     unsigned writePageCounter;
     unsigned appendPageCounter;
+    void *freeListData;
+    unsigned freeListCapacity;
 
     FileHandle();
 
@@ -76,7 +80,7 @@ public:
 
 
     RC readFreeList(void *freeList);                           // Get page free list
-    RC writeFreeList(void* freeList,unsigned freeListLen);                    // Write page free list
+    RC writeFreeList(void *freeList);                    // Write page free list
 
 private:
     unsigned pageCounter;

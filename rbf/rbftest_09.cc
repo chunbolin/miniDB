@@ -50,6 +50,10 @@ int RBFTest_9(RecordBasedFileManager &rbfm, std::vector<RID> &rids, std::vector<
         memset(record, 0, 1000);
         prepareLargeRecord(recordDescriptor.size(), nullsIndicator, i, record, &size);
 
+        std::cout << "insert recode: " << i << std::endl;
+        if(i==92){
+            size=0;
+        }
         rc = rbfm.insertRecord(fileHandle, recordDescriptor, record, rid);
         assert(rc == success && "Inserting a record should not fail.");
 

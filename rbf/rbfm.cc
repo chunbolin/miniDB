@@ -87,10 +87,11 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
     if (recordSize < sizeof(RID)) recordSize = sizeof(RID);
     bool flag = false;
     void *page = malloc(PAGE_SIZE);
-    unsigned pageNum = fileHandle.getNumberOfPages();
-    short freeList[pageNum + 1];
-    fileHandle.readFreeList(freeList);
-    for (int i = pageNum - 1; i >= 0; i--) {
+
+    //read freeList
+    short *freeList = (short *) fileHandle.freeListData;
+
+    for (int i = fileHandle.getNumberOfPages() - 1; i >= 0; i--) {
         if (freeList[i] >= recordSize + sizeof(SlotElement)) {
 
             fileHandle.readPage(i, page);
@@ -145,14 +146,25 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
         memcpy(page, &pageMsg, sizeof(pageMsg));
         SlotElement slotElement{recordSize, offset};
         memcpy((char *) page + sizeof(PageMsg), &slotElement, sizeof(slotElement));
-
-        fileHandle.appendPage(page);
-        freeList[pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
-
         rid.pageNum = fileHandle.getNumberOfPages() - 1;
         rid.slotNum = 0;
+
+        fileHandle.appendPage(page);
+
+        unsigned currentPageNum = fileHandle.getNumberOfPages();
+        unsigned freeListCapacity = fileHandle.freeListCapacity;
+        if (currentPageNum > freeListCapacity) {
+            auto *newFreeList = (short *) malloc(sizeof(short) * freeListCapacity * 2);
+            memcpy(newFreeList, freeList, freeListCapacity);
+            free(fileHandle.freeListData);
+            fileHandle.freeListData = newFreeList;
+            fileHandle.freeListCapacity *= 2;
+
+            freeList = (short *) fileHandle.freeListData;
+        }
+        freeList[currentPageNum - 1] = pageMsg.freeEnd - pageMsg.freeStart + 1;
     }
-    fileHandle.writeFreeList(freeList, flag ? pageNum : pageNum + 1);
+
     free(page);
     return 0;
 }
@@ -187,9 +199,7 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vecto
                                         const RID &rid) {
     void *page = malloc(PAGE_SIZE);
     fileHandle.readPage(rid.pageNum, page);
-    unsigned pageNum = fileHandle.getNumberOfPages();
-    short freeList[pageNum];
-    fileHandle.readFreeList(freeList);
+
     PageMsg pageMsg{};
     memcpy(&pageMsg, page, sizeof(PageMsg));
 
@@ -217,10 +227,12 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vecto
         slots[rid.slotNum].length = Unused;
         memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
         fileHandle.writePage(rid.pageNum, page);
-        freeList[rid.pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
     }
 
-    fileHandle.writeFreeList(freeList, pageNum);
+    //maintain freeList
+    short *freeList = (short *) fileHandle.freeListData;
+    freeList[rid.pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
+
     free(page);
     return 0;
 }
@@ -269,9 +281,7 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
 
     void *page = malloc(PAGE_SIZE);
     fileHandle.readPage(rid.pageNum, page);
-    unsigned pageNum = fileHandle.getNumberOfPages();
-    short freeList[pageNum];
-    fileHandle.readFreeList(freeList);
+
     PageMsg pageMsg{};
     memcpy(&pageMsg, page, sizeof(PageMsg));
 
@@ -289,7 +299,7 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
     if (newLength == length) {
         //direct update tuple
         memcpy((char *) page + offset, data, length);
-    } else if (newLength < length) {
+    } else if (newLength < length) { //insert tuple and compact disk
         int moveOffset = length - newLength;
         memcpy((char *) page + offset + moveOffset, data, newLength);
         slots[rid.slotNum].length = newLength;
@@ -348,8 +358,8 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
     fileHandle.writePage(rid.pageNum, page);
 
     //maintain freeList
+    short *freeList = (short *) fileHandle.freeListData;
     freeList[rid.pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
-    fileHandle.writeFreeList(freeList, pageNum);
 
     free(page);
     return 0;
