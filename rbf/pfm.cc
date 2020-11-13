@@ -26,18 +26,23 @@ RC readCounterValues(FILE *file, FileMsg *fileMsg) {
     return 0;
 }
 
-void handleError(size_t result, size_t supposeValue) {
-
-}
+PagedFileManager *PagedFileManager::_pf_manager = nullptr;
 
 PagedFileManager &PagedFileManager::instance() {
-    static PagedFileManager _pf_manager = PagedFileManager();
-    return _pf_manager;
+    if (!_pf_manager) {
+        _pf_manager = new PagedFileManager();
+    }
+    return *_pf_manager;
 }
 
 PagedFileManager::PagedFileManager() = default;
 
-PagedFileManager::~PagedFileManager() = default;
+PagedFileManager::~PagedFileManager() {
+    if (_pf_manager) {
+        delete _pf_manager;
+        _pf_manager = nullptr;
+    }
+}
 
 PagedFileManager::PagedFileManager(const PagedFileManager &) = default;
 
@@ -45,133 +50,170 @@ PagedFileManager &PagedFileManager::operator=(const PagedFileManager &) = defaul
 
 RC PagedFileManager::createFile(const std::string &fileName) {
     FILE *check = fopen(fileName.c_str(), "rb");
-    if (check == nullptr) {
-        FILE *file = fopen(fileName.c_str(), "wb");
-
-        //init all counter
-        FileMsg fileMsg{0, 0, 0, 0};
-        writeCounterValues(file, &fileMsg);
-
-        fclose(file);
-        return 0;
-    } else {
-        fclose(check);
-        return -1;
+    if (check) {
+        return rc::FILE_EXISTS;
     }
+    FILE *file = fopen(fileName.c_str(), "wb");
+    if (!file) {
+        return rc::FILE_CREATE_FAILED;
+    }
+    //init all counter
+    FileMsg fileMsg{0, 0, 0, 0};
+    writeCounterValues(file, &fileMsg);
+    fclose(file);
+    return rc::OK;
+
 }
 
 RC PagedFileManager::destroyFile(const std::string &fileName) {
-    if (remove(fileName.c_str()) != 0) {
-        perror("Error deleting file");
-        return -1;
-    } else {
-        return 0;
+    // Test whether filName already exists
+    FILE *file = fopen(fileName.c_str(), "rb");
+    if (!file) {
+        return rc::FILE_NOT_FOUND;
     }
+    fclose(file);
+    int res = remove(fileName.c_str());
+    if (res != 0) {
+        return rc::FILE_REMOVE_FAILED;
+    }
+    return rc::OK;
 }
 
 RC PagedFileManager::openFile(const std::string &fileName, FileHandle &fileHandle) {
-    FILE *check = fopen(fileName.c_str(), "rb");
-    if (check != nullptr) {
-        fclose(check);
-        FILE *file = fopen(fileName.c_str(), "rw+b");
-
-        FileMsg fileMsg{};
-        readCounterValues(file, &fileMsg);
-
-        //init counters and freeList
-        fileHandle.initHandle(fileMsg.pageCounter, file, fileMsg.readPageCounter, fileMsg.writePageCounter,
-                              fileMsg.appendPageCounter);
-
-        unsigned currentPageNum = fileHandle.getNumberOfPages();
-        unsigned freeListCapacity = fileHandle.freeListCapacity;
-        if (currentPageNum > freeListCapacity) {
-            auto *newFreeList = (short *) malloc(sizeof(short) * currentPageNum);
-            free(fileHandle.freeListData);
-            fileHandle.freeListData = newFreeList;
-            fileHandle.freeListCapacity = currentPageNum;
-        }
-        fileHandle.readFreeList(fileHandle.freeListData);
-
-        return 0;
-    } else {
-        return -1;
+    FILE *file = fopen(fileName.c_str(), "rb");
+    if (!file) {
+        return rc::FILE_NOT_FOUND;
     }
-
+    fclose(file);
+    file = fopen(fileName.c_str(), "rw+b");
+    fileHandle.loadFile(file);
+    return rc::OK;
 }
 
 RC PagedFileManager::closeFile(FileHandle &fileHandle) {
-    fileHandle.writeFreeList(fileHandle.freeListData);
-    free(fileHandle.freeListData);
-    fileHandle.close();
-
-    return 0;
+    if (&fileHandle == nullptr) {
+        return rc::FILE_HANDLE_NOT_FOUND;
+    }
+    return fileHandle.close();
 }
 
-FileHandle::FileHandle() = default;
+FileHandle::FileHandle() {
+    this->pageCounter = 0;
+    this->readPageCounter = 0;
+    this->writePageCounter = 0;
+    this->appendPageCounter = 0;
+    this->_file = nullptr;
+    this->freeListData = nullptr;
+    this->freeListCapacity = 0;
+}
 
-FileHandle::~FileHandle() = default;
+FileHandle::~FileHandle() {
+    if (_file) {
+        _file = nullptr;
+    }
+}
 
-RC FileHandle::initHandle(unsigned pageCounter, FILE *file,
-                          unsigned readPageCounter,
-                          unsigned writePageCounter,
-                          unsigned appendPageCounter) {
-    this->pageCounter = pageCounter;
-    this->file = file;
-    this->readPageCounter = readPageCounter;
-    this->writePageCounter = writePageCounter;
-    this->appendPageCounter = appendPageCounter;
+RC FileHandle::loadFile(FILE *file) {
+    FileMsg fileMsg{};
+    rewind(file);
+    size_t readSize = fread(&fileMsg, sizeof(FileMsg), 1, file);
+    if (readSize != 1) {
+        return rc::HEAD_MSG_READ_ERR;
+    }
+    readCounterValues(file, &fileMsg);
+    this->pageCounter = fileMsg.pageCounter;
+    this->readPageCounter = fileMsg.readPageCounter;
+    this->writePageCounter = fileMsg.writePageCounter;
+    this->appendPageCounter = fileMsg.appendPageCounter;
+    this->_file = file;
 
-    freeListData = malloc(sizeof(short) * 8);
-    freeListCapacity = 8;
-    return 0;
+    //init freeList
+    if (pageCounter != 0) {
+        freeListData = malloc(sizeof(short) * pageCounter);
+        freeListCapacity = pageCounter;
+        int res = fseek(_file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+        if (res != 0) {
+            return rc::FILE_SEEK_ERR;
+        }
+        readSize = fread(freeListData, sizeof(short) * pageCounter, 1, _file);
+        if (readSize != 1) {
+            return rc::FREE_LIST_READ_ERR;
+        }
+    }
+    return rc::OK;
 }
 
 RC FileHandle::readPage(PageNum pageNum, void *data) {
-    if (pageNum >= pageCounter) return -1;
-    fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
-    size_t result = fread(data, PAGE_SIZE, 1, this->file);
-    if (result != 1) {
-        cout << "Error read page: " << pageNum << endl;
-        fclose(file);
-        return -1;
+    if (pageNum >= pageCounter) return rc::PAGE_NUMBER_EXCEEDS;
+    int res = fseek(_file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
+    if (res != 0) {
+        return rc::FILE_SEEK_ERR;
+    }
+    size_t readSize = fread(data, PAGE_SIZE, 1, _file);
+    if (readSize != 1) {
+        return rc::PAGE_READ_ERR;
     }
     readPageCounter++;
-    return 0;
+    return rc::OK;
 }
 
 RC FileHandle::writePage(PageNum pageNum, const void *data) {
     if (pageNum >= pageCounter) return -1;
-    fseek(file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
-    size_t result = fwrite(data, PAGE_SIZE, 1, file);
-    if (result != 1) {
-        cout << "Error write page: " << pageNum << endl;
-        fclose(file);
-        return -1;
+    int res = fseek(_file, sizeof(FileMsg) + pageNum * PAGE_SIZE, SEEK_SET);
+    if (res != 0) {
+        return rc::FILE_SEEK_ERR;
     }
-    fflush(file);
+    size_t writeSize = fwrite(data, PAGE_SIZE, 1, _file);
+    if (writeSize != 1) {
+        return rc::PAGE_WRITE_ERR;
+    }
     writePageCounter++;
-    return 0;
+    return rc::OK;
 }
 
 RC FileHandle::appendPage(const void *data) {
-    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
-    size_t result = fwrite(data, PAGE_SIZE, 1, file);
-    if (result != 1) {
-        cout << "Error append page" << endl;
-        fclose(file);
-        return -1;
+    int res = fseek(_file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+    if (res != 0) {
+        return rc::FILE_SEEK_ERR;
     }
-    fflush(file);
+    size_t writeSize = fwrite(data, PAGE_SIZE, 1, _file);
+    if (writeSize != 1) {
+        return rc::PAGE_WRITE_ERR;
+    }
     pageCounter++;
     appendPageCounter++;
-    return 0;
+    return rc::OK;
 }
 
 RC FileHandle::close() {
+    if (!_file) {
+        return rc::CLOSE_FILE_FAILED;
+    }
+    //store file header data
     FileMsg fileMsg{pageCounter, readPageCounter, writePageCounter, appendPageCounter};
-    writeCounterValues(file, &fileMsg);
-    fclose(file);
-    return 0;
+    rewind(_file);
+    size_t writeSize = fwrite(&fileMsg, sizeof(FileMsg), 1, _file);
+    if (writeSize != 1) {
+        return rc::HEAD_MSG_WRITE_ERR;
+    }
+    //store freeList
+    if (pageCounter != 0){
+        int res = fseek(_file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
+        if (res != 0) {
+            return rc::FILE_SEEK_ERR;
+        }
+        writeSize = fwrite(freeListData, sizeof(short) * pageCounter, 1, _file);
+        if (writeSize != 1) {
+            return rc::FREE_LIST_WRITE_ERR;
+        }
+        free(freeListData);
+    }
+    //close file
+    int closeRes = fclose(_file);
+    if (closeRes != 0) {
+        return rc::CLOSE_FILE_FAILED;
+    }
+    return rc::OK;
 }
 
 unsigned FileHandle::getNumberOfPages() {
@@ -182,33 +224,7 @@ RC FileHandle::collectCounterValues(unsigned &readPageCount, unsigned &writePage
     readPageCount = this->readPageCounter;
     writePageCount = this->writePageCounter;
     appendPageCount = this->appendPageCounter;
-    return 0;
-}
-
-RC FileHandle::readFreeList(void *freeList) {
-    if (pageCounter == 0) return 0; //we do not need to read freeList since its empty
-    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
-    size_t result;
-    result = fread(freeList, sizeof(short) * pageCounter, 1, file);
-    if (result != 1) {
-        cout << "Error read freeList" << endl;
-        fclose(file);
-        return -1;
-    }
-    return 0;
-}
-
-RC FileHandle::writeFreeList(void *freeList) {
-    if (pageCounter == 0) return 0; //we do not need to write freeList
-    fseek(file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
-    size_t result;
-    result = fwrite(freeList, sizeof(short) * pageCounter, 1, file);
-    if (result != 1) {
-        cout << "Error write freeList" << endl;
-        fclose(file);
-        return -1;
-    }
-    return 0;
+    return rc::OK;
 }
 
 

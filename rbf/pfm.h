@@ -6,6 +6,34 @@ typedef int RC;
 
 #define PAGE_SIZE 4096
 
+namespace rc {
+    enum ReturnCode {
+        OK = 0,
+
+        FILE_EXISTS = 1,
+        FILE_CREATE_FAILED = 2,
+        FILE_NOT_FOUND = 3,
+        FILE_HANDLE_NOT_FOUND = 4,
+        FILE_REMOVE_FAILED = 5,
+        FILE_SEEK_ERR = 6,
+
+        HEAD_MSG_READ_ERR=7,
+        HEAD_MSG_WRITE_ERR=8,
+        FREE_LIST_READ_ERR=9,
+        FREE_LIST_WRITE_ERR=10,
+
+
+        PAGE_READ_ERR = 11,
+        PAGE_WRITE_ERR = 12,
+        PAGE_NUMBER_EXCEEDS = 13,
+        LOAD_FILE_FAILED = 14,
+        CLOSE_FILE_FAILED = 15,
+
+        RECORD_TOO_LARGE = 16,
+        RECORD_READ_ERR = 17
+    };
+}
+
 #include <cstring>
 #include <string>
 #include <iostream>
@@ -50,6 +78,9 @@ protected:
     ~PagedFileManager();                                                // Prevent unwanted destruction
     PagedFileManager(const PagedFileManager &);                         // Prevent construction by copying
     PagedFileManager &operator=(const PagedFileManager &);              // Prevent assignment
+
+private:
+    static PagedFileManager *_pf_manager;
 };
 
 class FileHandle {
@@ -66,10 +97,7 @@ public:
 
     ~FileHandle();                                                      // Destructor
 
-    RC initHandle(unsigned pageCounter, FILE *file,
-                  unsigned readPageCounter,
-                  unsigned writePageCounter,
-                  unsigned appendPageCounter);
+    RC loadFile(FILE *file);
 
     RC readPage(PageNum pageNum, void *data);                           // Get a specific page
     RC writePage(PageNum pageNum, const void *data);                    // Write a specific page
@@ -79,13 +107,9 @@ public:
                             unsigned &appendPageCount);                 // Put current counter values into variables
     RC close();
 
-
-    RC readFreeList(void *freeList);                           // Get page free list
-    RC writeFreeList(void *freeList);                    // Write page free list
-
 private:
     unsigned pageCounter;
-    FILE *file;
+    FILE *_file;
 };
 
 
