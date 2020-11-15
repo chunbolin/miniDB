@@ -182,6 +182,19 @@ RC FileHandle::appendPage(const void *data) {
     }
     pageCounter++;
     appendPageCounter++;
+
+    //extend freeList
+    if (freeListCapacity == 0) {
+        freeListCapacity = 8; //init freeList capacity
+        freeListData = (short *) malloc(sizeof(short) * freeListCapacity);
+    } else if (pageCounter > freeListCapacity) {
+        auto *newFreeList = (short *) malloc(sizeof(short) * freeListCapacity * 2);
+        memcpy(newFreeList, freeListData, sizeof(short) * freeListCapacity);
+        free(freeListData);
+        freeListData = newFreeList;
+        freeListCapacity *= 2;
+    }
+
     return rc::OK;
 }
 
