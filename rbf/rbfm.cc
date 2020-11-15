@@ -1,15 +1,23 @@
 
 #include "rbfm.h"
 
+RecordBasedFileManager *RecordBasedFileManager::_rbf_manager = nullptr;
 
 RecordBasedFileManager &RecordBasedFileManager::instance() {
-    static RecordBasedFileManager _rbf_manager = RecordBasedFileManager();
-    return _rbf_manager;
+    if (!_rbf_manager) {
+        _rbf_manager = new RecordBasedFileManager();
+    }
+    return *_rbf_manager;
 }
 
 RecordBasedFileManager::RecordBasedFileManager() = default;
 
-RecordBasedFileManager::~RecordBasedFileManager() = default;
+RecordBasedFileManager::~RecordBasedFileManager() {
+    if (_rbf_manager) {
+        delete _rbf_manager;
+        _rbf_manager = nullptr;
+    }
+}
 
 RecordBasedFileManager::RecordBasedFileManager(const RecordBasedFileManager &) = default;
 
@@ -85,110 +93,65 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
 
     // since we may need to place tombstone when update, so recode size have to be >= sizeof(RID)
     if (recordSize < sizeof(RID)) recordSize = sizeof(RID);
-    bool flag = false;
+    bool isPutIn = false;
     void *page = malloc(PAGE_SIZE);
     unsigned pageCount = fileHandle.getNumberOfPages();
 
     //read freeList
-    short *freeList = (short *) fileHandle.freeListData;
+    auto *freeList = (short *) fileHandle.freeListData;
     unsigned insertPageNum, insertSlotNum, freeSpace;
     if (pageCount > 0) {
-        if (freeList[pageCount - 1] >= recordSize + sizeof(SlotElement)) { //try insert in first page
-            unsigned i = pageCount - 1;
-            fileHandle.readPage(i, page);
-            PageMsg pageMsg{};
-            memcpy(&pageMsg, page, sizeof(PageMsg));
+        //TODO direct convert from unsigned to int may be lossy
+        for (int i = pageCount - 1; i >= 0; i--) { //else insert from page 0
+            if (freeList[i] >= recordSize + sizeof(SlotElement)) {
 
-            SlotElement slots[pageMsg.slotCount + 1];
-            memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
-            //find unused slot, if no such slot, append a new one
-            unsigned slotNum = 0;
-            bool needAddSlot = false;
-            for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
-                if (slotNum == pageMsg.slotCount) {
-                    needAddSlot = true;
-                    break;
-                }
-                if (slots[slotNum].length == Unused) break;
-            }
+                fileHandle.readPage(i, page);
+                PageMsg pageMsg{};
+                memcpy(&pageMsg, page, sizeof(PageMsg));
 
-            int offset = pageMsg.freeEnd - recordSize + 1;
-
-            //insert tuple
-            memcpy((char *) page + offset, data, recordSize);
-
-            //maintain pageMsg
-            pageMsg.tupleCount++;
-            if (needAddSlot) {
-                pageMsg.slotCount++;
-                pageMsg.freeStart += sizeof(SlotElement);
-            }
-            pageMsg.freeEnd -= recordSize;
-            memcpy(page, &pageMsg, sizeof(pageMsg));
-
-            //maintain slots
-            slots[slotNum].offset = offset;
-            slots[slotNum].length = recordSize;
-            memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
-
-            fileHandle.writePage(i, page);
-
-            insertPageNum = i;
-            insertSlotNum = slotNum;
-            freeSpace = pageMsg.freeEnd - pageMsg.freeStart + 1;
-            flag = true;
-        } else {
-            for (int i = 0; i < pageCount - 1; i++) { //else insert from page 0
-                if (freeList[i] >= recordSize + sizeof(SlotElement)) {
-
-                    fileHandle.readPage(i, page);
-                    PageMsg pageMsg{};
-                    memcpy(&pageMsg, page, sizeof(PageMsg));
-
-                    SlotElement slots[pageMsg.slotCount + 1];
-                    memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
-                    //find unused slot, if no such slot, append a new one
-                    unsigned slotNum = 0;
-                    bool needAddSlot = false;
-                    for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
-                        if (slotNum == pageMsg.slotCount) {
-                            needAddSlot = true;
-                            break;
-                        }
-                        if (slots[slotNum].length == Unused) break;
+                SlotElement slots[pageMsg.slotCount + 1];
+                memcpy(slots, (char *) page + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+                //find unused slot, if no such slot, append a new one
+                unsigned slotNum = 0;
+                bool needAddSlot = false;
+                for (; slotNum < pageMsg.slotCount + 1; ++slotNum) {
+                    if (slotNum == pageMsg.slotCount) {
+                        needAddSlot = true;
+                        break;
                     }
-
-                    int offset = pageMsg.freeEnd - recordSize + 1;
-
-                    //insert tuple
-                    memcpy((char *) page + offset, data, recordSize);
-
-                    //maintain pageMsg
-                    pageMsg.tupleCount++;
-                    if (needAddSlot) {
-                        pageMsg.slotCount++;
-                        pageMsg.freeStart += sizeof(SlotElement);
-                    }
-                    pageMsg.freeEnd -= recordSize;
-                    memcpy(page, &pageMsg, sizeof(pageMsg));
-
-                    //maintain slots
-                    slots[slotNum].offset = offset;
-                    slots[slotNum].length = recordSize;
-                    memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
-
-                    fileHandle.writePage(i, page);
-
-                    insertPageNum = i;
-                    insertSlotNum = slotNum;
-                    freeSpace = pageMsg.freeEnd - pageMsg.freeStart + 1;
-                    flag = true;
-                    break;
+                    if (slots[slotNum].length == Unused) break;
                 }
+
+                int offset = pageMsg.freeEnd - recordSize + 1;
+
+                //insert tuple
+                memcpy((char *) page + offset, data, recordSize);
+
+                //maintain pageMsg
+                pageMsg.tupleCount++;
+                if (needAddSlot) {
+                    pageMsg.slotCount++;
+                    pageMsg.freeStart += sizeof(SlotElement);
+                }
+                pageMsg.freeEnd -= recordSize;
+                memcpy(page, &pageMsg, sizeof(pageMsg));
+
+                //maintain slots
+                slots[slotNum].offset = offset;
+                slots[slotNum].length = recordSize;
+                memcpy((char *) page + sizeof(PageMsg), slots, sizeof(SlotElement) * pageMsg.slotCount);
+
+                fileHandle.writePage(i, page);
+
+                insertPageNum = i;
+                insertSlotNum = slotNum;
+                freeSpace = pageMsg.freeEnd - pageMsg.freeStart + 1;
+                isPutIn = true;
+                break;
             }
         }
     }
-    if (!flag) { //append a new page
+    if (!isPutIn) { //append a new page
         int offset = PAGE_SIZE - recordSize;
         PageMsg pageMsg{1, 1, sizeof(pageMsg) + sizeof(SlotElement), offset - 1};
         memcpy((char *) page + offset, data, recordSize);
@@ -208,7 +171,7 @@ RC RecordBasedFileManager::insertRecord(FileHandle &fileHandle, const std::vecto
     freeList[insertPageNum] = freeSpace;
 
     free(page);
-    return 0;
+    return rc::OK;
 }
 
 RC RecordBasedFileManager::readRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
@@ -273,11 +236,11 @@ RC RecordBasedFileManager::deleteRecord(FileHandle &fileHandle, const std::vecto
     }
 
     //maintain freeList
-    short *freeList = (short *) fileHandle.freeListData;
+    auto *freeList = (short *) fileHandle.freeListData;
     freeList[rid.pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
 
     free(page);
-    return 0;
+    return rc::OK;
 }
 
 RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescriptor, const void *data) {
@@ -315,7 +278,7 @@ RC RecordBasedFileManager::printRecord(const std::vector<Attribute> &recordDescr
     }
     std::cout << std::endl;
 
-    return 0;
+    return rc::OK;
 }
 
 RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
@@ -390,8 +353,6 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
             }
             pageMsg.freeEnd += moveOffset;
         }
-
-
     }
     //maintain pageMsg
     memcpy(page, &pageMsg, sizeof(pageMsg));
@@ -401,11 +362,11 @@ RC RecordBasedFileManager::updateRecord(FileHandle &fileHandle, const std::vecto
     fileHandle.writePage(rid.pageNum, page);
 
     //maintain freeList
-    short *freeList = (short *) fileHandle.freeListData;
+    auto *freeList = (short *) fileHandle.freeListData;
     freeList[rid.pageNum] = pageMsg.freeEnd - pageMsg.freeStart + 1;
 
     free(page);
-    return 0;
+    return rc::OK;
 }
 
 RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
@@ -466,7 +427,7 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const std::vect
         std::cout << std::endl;
     }
     free(page);
-    return 0;
+    return rc::OK;
 }
 
 RC RecordBasedFileManager::scan(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,

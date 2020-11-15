@@ -142,6 +142,9 @@ protected:
     RecordBasedFileManager(const RecordBasedFileManager &);                     // Prevent construction by copying
     RecordBasedFileManager &operator=(const RecordBasedFileManager &);          // Prevent assignment
 
+private:
+    static RecordBasedFileManager *_rbf_manager;
+
 };
 
 #endif // _rbfm_h_

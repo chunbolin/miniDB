@@ -111,6 +111,10 @@ FileHandle::~FileHandle() {
     if (_file) {
         _file = nullptr;
     }
+    if (freeListData) {
+        free(freeListData);
+        freeListData = nullptr;
+    }
 }
 
 RC FileHandle::loadFile(FILE *file) {
@@ -210,7 +214,7 @@ RC FileHandle::close() {
         return rc::HEAD_MSG_WRITE_ERR;
     }
     //store freeList
-    if (pageCounter != 0){
+    if (pageCounter != 0) {
         int res = fseek(_file, sizeof(FileMsg) + pageCounter * PAGE_SIZE, SEEK_SET);
         if (res != 0) {
             return rc::FILE_SEEK_ERR;
