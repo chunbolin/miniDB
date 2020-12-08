@@ -433,8 +433,184 @@ RC RecordBasedFileManager::readAttribute(FileHandle &fileHandle, const std::vect
 RC RecordBasedFileManager::scan(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
                                 const std::string &conditionAttribute, const CompOp compOp, const void *value,
                                 const std::vector<std::string> &attributeNames, RBFM_ScanIterator &rbfm_ScanIterator) {
-    return -1;
+    rbfm_ScanIterator.initIterator(fileHandle);
+
 }
 
+
+RC RBFM_ScanIterator::initIterator(FileHandle &fileHandle, const std::vector<Attribute> &recordDescriptor,
+                                   const std::string &conditionAttribute, const CompOp compOp, const void *value,
+                                   const std::vector<std::string> &attributeNames) {
+    this->fileHandle = fileHandle;
+    this->recordDescriptor = recordDescriptor;
+    for (const auto &i : recordDescriptor) {
+        if (i.name == conditionAttribute) {
+            this->conditionAttribute = i;
+        }
+    }
+    this->compOp = compOp;
+    if (this->conditionAttribute.type == TypeInt or this->conditionAttribute.type == TypeReal) {
+        this->value = malloc(sizeof(int));
+        memcpy(this->value, value, sizeof(int));
+    } else {
+        void *tmpLen = malloc(sizeof(int));
+        memcpy(tmpLen, value, sizeof(int));
+        int len = *(int *) tmpLen;
+        this->value = malloc(sizeof(char) * len);
+        memcpy(this->value, ((char *) value) + sizeof(int), len);
+    }
+    this->attributeNames = attributeNames;
+    this->currPageNum = 0;
+    this->currSlotNum = 0;
+    this->currPage = malloc(PAGE_SIZE);
+}
+
+RC RBFM_ScanIterator::getNextRecord(RID &rid, void *data) {
+    unsigned pageCount = fileHandle.getNumberOfPages();
+    PageMsg pageMsg{};
+    memcpy(&pageMsg, currPage, sizeof(PageMsg));
+
+    currSlotNum++;
+    if (currSlotNum >= pageMsg.slotCount) {
+        currPageNum++;
+        currSlotNum = 0;
+        if (currPageNum >= pageCount) {
+            return RBFM_EOF;
+        }
+        fileHandle.readPage(currPageNum, currPage);
+    }
+
+    SlotElement slots[pageMsg.slotCount];
+    memcpy(slots, (char *) currPage + sizeof(PageMsg), sizeof(SlotElement) * pageMsg.slotCount);
+
+    SlotElement &slot = slots[currSlotNum];
+    int offset = slot.offset;
+    int length = slot.length;
+    if (length == Unused or length == Tombstone) { //since this slot do not have record, we read next slot
+        getNextRecord(rid, data);
+    } else { //else we direct read it
+        bool qualified = false;
+        bool resultNullInfos[this->attributeNames.size()];
+        void *record = malloc(length);
+        memcpy(record, (char *) currPage + offset, length);
+        int attrSize = this->recordDescriptor.size();
+        int curr = ceil(((double) attrSize) / 8);
+        bool nullInfo[attrSize];
+        getNullInfo(this->recordDescriptor, record, nullInfo);
+        for (int i = 0; i < attrSize; ++i) {
+            Attribute attr = this->recordDescriptor.at(i);
+            if (nullInfo[i])
+                continue;
+            else {
+                if (attr.type == TypeInt) {
+                    void *tmp = malloc(sizeof(int));
+                    memcpy(tmp, (char *) record + curr, sizeof(int));
+                    if (this->attributeNames)
+                    if (attr.name == this->conditionAttribute.name) {
+
+                        int realValue = *(int *) tmp;
+                        int supposeValue = *(int *) this->value;
+                        switch (this->compOp) {
+                            case EQ_OP:
+                                qualified = (realValue == supposeValue);
+                                break;
+                            case LT_OP:
+                                qualified = (realValue < supposeValue);
+                                break;
+                            case LE_OP:
+                                qualified = (realValue <= supposeValue);
+                                break;
+                            case GT_OP:
+                                qualified = (realValue > supposeValue);
+                                break;
+                            case GE_OP:
+                                qualified = (realValue >= supposeValue);
+                                break;
+                            case NE_OP:
+                                qualified = (realValue != supposeValue);
+                                break;
+                            case NO_OP:
+                                qualified = true;
+                                break;
+                        }
+                    }
+                    curr += 4;
+                } else if (attr.type == TypeReal) {
+                    if (attr.name == this->conditionAttribute.name) {
+                        void *tmp = malloc(sizeof(float));
+                        memcpy(tmp, (char *) record + curr, sizeof(float));
+                        float realValue = *(float *) tmp;
+                        float supposeValue = *(float *) this->value;
+                        switch (this->compOp) {
+                            case EQ_OP:
+                                qualified = (realValue == supposeValue);
+                                break;
+                            case LT_OP:
+                                qualified = (realValue < supposeValue);
+                                break;
+                            case LE_OP:
+                                qualified = (realValue <= supposeValue);
+                                break;
+                            case GT_OP:
+                                qualified = (realValue > supposeValue);
+                                break;
+                            case GE_OP:
+                                qualified = (realValue >= supposeValue);
+                                break;
+                            case NE_OP:
+                                qualified = (realValue != supposeValue);
+                                break;
+                            case NO_OP:
+                                qualified = true;
+                                break;
+                        }
+                    }
+                    curr += 4;
+                } else if (attr.type == TypeVarChar) {
+                    int len;
+                    memcpy(&len, (char *) record + curr, sizeof(int));
+                    curr += 4;
+                    char str[len + 1];
+                    memcpy(str, (char *) record + curr, len);
+                    str[len] = '\0';
+                    curr += len;
+                    if (attr.name == this->conditionAttribute.name) {
+                        std::string realValue(str);
+                        std::string supposeValue((char *) this->value);
+                        switch (this->compOp) {
+                            case EQ_OP:
+                                qualified = (realValue == supposeValue);
+                                break;
+                            case LT_OP:
+                                qualified = (realValue < supposeValue);
+                                break;
+                            case LE_OP:
+                                qualified = (realValue <= supposeValue);
+                                break;
+                            case GT_OP:
+                                qualified = (realValue > supposeValue);
+                                break;
+                            case GE_OP:
+                                qualified = (realValue >= supposeValue);
+                                break;
+                            case NE_OP:
+                                qualified = (realValue != supposeValue);
+                                break;
+                            case NO_OP:
+                                qualified = true;
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+        if (!qualified)
+            getNextRecord(rid, data);
+    }
+    rid.pageNum = currPageNum;
+    rid.slotNum = currSlotNum;
+
+    return rc::OK;
+}
 
 

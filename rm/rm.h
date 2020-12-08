@@ -1,6 +1,7 @@
 #ifndef _rm_h_
 #define _rm_h_
 
+#include <cassert>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,8 @@ public:
     RC getNextEntry(RID &rid, void *key) { return RM_EOF; };    // Get next matching entry
     RC close() { return -1; };                        // Terminate index scan
 };
+
+
 
 // Relation Manager
 class RelationManager {
@@ -97,6 +100,11 @@ protected:
 
 private:
     static RelationManager *_relation_manager;
+    const std::string tablesFileName = "Tables";
+    const std::string columnsFileName = "Columns";
+    std::vector<Attribute> tablesRecordDescriptor;
+    std::vector<Attribute> columnsRecordDescriptor;
+
 };
 
 #endif
