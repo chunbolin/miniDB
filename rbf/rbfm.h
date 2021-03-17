@@ -1,7 +1,12 @@
 #ifndef _rbfm_h_
 #define _rbfm_h_
 
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <vector>
+#include <cmath>
+#include <iostream>
 #include "pfm.h"
 
 // Record ID
@@ -22,6 +27,7 @@ struct Attribute {
     AttrType type;     // attribute type
     AttrLength length; // attribute length
 };
+
 
 // Comparison Operator (NOT needed for part 1 of the project)
 typedef enum {
@@ -50,18 +56,53 @@ typedef enum {
 //  }
 //  rbfmScanIterator.close();
 
+class Block{
+public:
+private:
+    void *data;
+    int tupleCount;
+    int slotCount;
+    int freeStart;
+    int freeEnd;
+
+    SlotElement* slots;
+
+};
+
+class Tuple{
+
+};
+
 class RBFM_ScanIterator {
 public:
     RBFM_ScanIterator() = default;;
 
     ~RBFM_ScanIterator() = default;;
 
+    RC initIterator(FileHandle &fileHandle,const std::vector<Attribute> &recordDescriptor,
+                    const std::string &conditionAttribute, const CompOp compOp, const void *value,
+                    const std::vector<std::string> &attributeNames);
+
     // Never keep the results in the memory. When getNextRecord() is called,
     // a satisfying record needs to be fetched from the file.
     // "data" follows the same format as RecordBasedFileManager::insertRecord().
-    RC getNextRecord(RID &rid, void *data) { return RBFM_EOF; };
+    RC getNextRecord(RID &rid, void *data) ;
 
     RC close() { return -1; };
+
+private:
+    FileHandle &fileHandle;
+    std::vector<Attribute> recordDescriptor;
+
+    Attribute conditionAttribute;
+
+    CompOp compOp;
+    void *value;
+    std::vector<std::string> attributeNames;
+
+    unsigned currPageNum;
+    unsigned short currSlotNum;
+    void *currPage;
 };
 
 class RecordBasedFileManager {
@@ -75,6 +116,16 @@ public:
     RC openFile(const std::string &fileName, FileHandle &fileHandle);   // Open a record-based file
 
     RC closeFile(FileHandle &fileHandle);                               // Close a record-based file
+
+    static void getPageMsg(const void *page,PageMsg &pageMsg);
+
+    static void setPageMsg(const void *page,PageMsg &pageMsg);
+
+    static void getSlotElements(const void *page, int slotCount, SlotElement slots[]);
+
+    static void setSlotElements(const void *page, int slotCount, SlotElement slots[]);
+
+
 
     //  Format of the data passed into the function is the following:
     //  [n byte-null-indicators for y fields] [actual value for the first field] [actual value for the second field] ...
@@ -129,6 +180,7 @@ public:
             const std::vector<std::string> &attributeNames, // a list of projected attributes
             RBFM_ScanIterator &rbfm_ScanIterator);
 
+    RC shiftRecords();
 protected:
     RecordBasedFileManager();                                                   // Prevent construction
     ~RecordBasedFileManager();                                                  // Prevent unwanted destruction
@@ -137,7 +189,6 @@ protected:
 
 private:
     static RecordBasedFileManager *_rbf_manager;
-    PagedFileManager *_pf_manager;
 
 };
 

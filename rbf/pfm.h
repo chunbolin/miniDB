@@ -9,8 +9,25 @@ typedef int RC;
 #include <string>
 #include <fstream>
 #include <cstring>
+#include <cassert>
 
 using namespace std;
+
+struct PageMsg {
+    int tupleCount;
+    int slotCount;
+    int freeStart;
+    int freeEnd;
+};
+
+struct SlotElement {
+    int length;  //length can be Unused,Tombstone in SlotStatus
+    int offset;
+};
+
+typedef enum {
+    Unused = -1, Tombstone = -2
+} SlotStatus;
 
 enum ReturnCode {
     OK = 0,
